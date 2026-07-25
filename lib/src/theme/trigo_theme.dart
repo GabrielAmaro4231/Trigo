@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-class BuckwheatTheme {
-  const BuckwheatTheme._();
+class TrigoTheme {
+  const TrigoTheme._();
 
   static ThemeData light() {
     const scheme = ColorScheme(

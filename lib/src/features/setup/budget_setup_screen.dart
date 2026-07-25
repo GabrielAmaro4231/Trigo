@@ -4,8 +4,8 @@ import 'package:flutter/services.dart';
 import '../../models/budget_plan.dart';
 import '../../utils/dates.dart';
 import '../../utils/money.dart';
-import '../../widgets/buckwheat_backdrop.dart';
 import '../../widgets/glass_surface.dart';
+import '../../widgets/trigo_backdrop.dart';
 import '../transactions/transaction_calculator_screen.dart';
 
 class BudgetSetupScreen extends StatefulWidget {
@@ -39,7 +39,7 @@ class _BudgetSetupScreenState extends State<BudgetSetupScreen> {
     final canContinue = _budgetMinorUnits > 0;
 
     return Scaffold(
-      body: BuckwheatBackdrop(
+      body: TrigoBackdrop(
         child: SafeArea(
           child: Center(
             child: SingleChildScrollView(

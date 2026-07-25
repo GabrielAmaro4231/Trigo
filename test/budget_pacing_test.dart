@@ -1,7 +1,7 @@
-import 'package:buckwheat/src/models/budget_plan.dart';
-import 'package:buckwheat/src/models/transaction_entry.dart';
-import 'package:buckwheat/src/utils/budget_pacing.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trigo/src/models/budget_plan.dart';
+import 'package:trigo/src/models/transaction_entry.dart';
+import 'package:trigo/src/utils/budget_pacing.dart';
 
 void main() {
   group('budget pacing', () {

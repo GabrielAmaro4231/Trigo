@@ -1,4 +1,4 @@
-package com.example.buckwheat
+package com.example.trigo
 
 import io.flutter.embedding.android.FlutterActivity
 

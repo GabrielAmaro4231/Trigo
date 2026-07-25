@@ -1,5 +1,5 @@
-import 'package:buckwheat/src/models/expense_tag.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trigo/src/models/expense_tag.dart';
 
 void main() {
   group('expense tags', () {

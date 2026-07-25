@@ -15,5 +15,5 @@ Future<void> main() async {
     ),
   );
 
-  runApp(const BuckwheatApp());
+  runApp(const TrigoApp());
 }

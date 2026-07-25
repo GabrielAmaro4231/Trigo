@@ -10,9 +10,9 @@ import '../../models/transaction_entry.dart';
 import '../../utils/budget_pacing.dart';
 import '../../utils/dates.dart';
 import '../../utils/money.dart';
-import '../../widgets/buckwheat_backdrop.dart';
 import '../../widgets/budget_pill.dart';
 import '../../widgets/glass_surface.dart';
+import '../../widgets/trigo_backdrop.dart';
 
 class TransactionCalculatorScreen extends StatefulWidget {
   const TransactionCalculatorScreen({
@@ -101,7 +101,7 @@ class _TransactionCalculatorScreenState
 
     return Scaffold(
       resizeToAvoidBottomInset: false,
-      body: BuckwheatBackdrop(
+      body: TrigoBackdrop(
         child: Stack(
           children: <Widget>[
             Column(

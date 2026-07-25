@@ -1,6 +1,6 @@
-import 'package:buckwheat/src/widgets/budget_pill.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trigo/src/widgets/budget_pill.dart';
 
 void main() {
   testWidgets('shows the remaining amount without left copy', (tester) async {

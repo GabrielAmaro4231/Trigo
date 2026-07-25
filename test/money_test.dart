@@ -1,5 +1,5 @@
-import 'package:buckwheat/src/utils/money.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:trigo/src/utils/money.dart';
 
 void main() {
   group('money formatting', () {

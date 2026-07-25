@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-class BuckwheatBackdrop extends StatelessWidget {
-  const BuckwheatBackdrop({
+class TrigoBackdrop extends StatelessWidget {
+  const TrigoBackdrop({
     required this.child,
     super.key,
   });
