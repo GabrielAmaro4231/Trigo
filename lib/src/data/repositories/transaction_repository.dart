@@ -27,6 +27,16 @@ class TransactionRepository {
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
+
+  Future<void> deleteById(String id) async {
+    final database = await _appDatabase.database;
+
+    await database.delete(
+      'transactions',
+      where: 'id = ?',
+      whereArgs: <Object?>[id],
+    );
+  }
 }
 
 TransactionEntry _transactionFromRow(Map<String, Object?> row) {

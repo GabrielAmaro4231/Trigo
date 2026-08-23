@@ -21,5 +21,12 @@ void main() {
       expect(parseCurrencyInputToMinorUnits(r'$1,234.56'), 123456);
       expect(parseCurrencyInputToMinorUnits('99'), 9900);
     });
+
+    test('caps parsed input at the supported SQLite-safe amount', () {
+      expect(
+        parseCurrencyInputToMinorUnits('999999999999999999999.99'),
+        maximumSupportedMinorUnits,
+      );
+    });
   });
 }

@@ -86,6 +86,27 @@ void main() {
       expect(transactions.single.id, 'persisted-transaction');
     });
 
+    test('deletes a transaction permanently', () async {
+      final repository = TransactionRepository(appDatabase);
+      await repository.insert(
+        TransactionEntry(
+          id: 'to-delete',
+          amountMinorUnits: -1299,
+          createdAt: DateTime(2026, 8, 2, 9),
+        ),
+      );
+
+      await repository.deleteById('to-delete');
+      await appDatabase.close();
+      appDatabase = AppDatabase(
+        databaseFactory: databaseFactoryFfi,
+        databasePath: databasePath,
+      );
+      final reopenedRepository = TransactionRepository(appDatabase);
+
+      expect(await reopenedRepository.findAllNewestFirst(), isEmpty);
+    });
+
     test('seeds and saves tags in the selected order', () async {
       final repository = ExpenseTagRepository(appDatabase);
 

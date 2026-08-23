@@ -36,13 +36,18 @@ class _TransactionCalculatorScreenState
     extends State<TransactionCalculatorScreen> {
   List<TransactionEntry> _transactions = <TransactionEntry>[];
 
+  Timer? _dayChangeTimer;
+  late final AppLifecycleListener _lifecycleListener;
   late final ExpenseTagRepository _tagRepository;
   late final TransactionRepository _transactionRepository;
+  late DateTime _currentDate;
   late List<ExpenseTag> _tags;
   String? _selectedTagId;
 
   int _inputMinorUnits = 0;
   bool _isLoading = true;
+  bool _hasLoadError = false;
+  bool _isSavingTransaction = false;
   bool _showTransactions = false;
   bool _showTagPicker = false;
 
@@ -51,8 +56,20 @@ class _TransactionCalculatorScreenState
     super.initState();
     _tagRepository = ExpenseTagRepository(widget.database);
     _transactionRepository = TransactionRepository(widget.database);
+    _currentDate = dateOnly(DateTime.now());
     _tags = defaultExpenseTags();
+    _lifecycleListener = AppLifecycleListener(
+      onResume: _refreshCurrentDate,
+    );
+    _scheduleDayChange();
     unawaited(_loadPersistedState());
+  }
+
+  @override
+  void dispose() {
+    _dayChangeTimer?.cancel();
+    _lifecycleListener.dispose();
+    super.dispose();
   }
 
   ExpenseTag? get _selectedTag {
@@ -71,20 +88,19 @@ class _TransactionCalculatorScreenState
   }
 
   int get _dailyBudgetMinorUnits {
-    return dailyBudgetMinorUnitsForDate(widget.plan, DateTime.now());
+    return dailyBudgetMinorUnitsForDate(widget.plan, _currentDate);
   }
 
   int get _todayAvailableMinorUnits {
     return availableBudgetMinorUnitsThroughDate(
       widget.plan,
-      DateTime.now(),
+      _currentDate,
       _transactions,
     );
   }
 
   int get _todayStartingAvailableMinorUnits {
-    final now = DateTime.now();
-    final yesterday = dateOnly(now).subtract(const Duration(days: 1));
+    final yesterday = _currentDate.subtract(const Duration(days: 1));
     final carryoverMinorUnits = availableBudgetMinorUnitsThroughDate(
       widget.plan,
       yesterday,
@@ -107,6 +123,12 @@ class _TransactionCalculatorScreenState
             child: CircularProgressIndicator(),
           ),
         ),
+      );
+    }
+
+    if (_hasLoadError) {
+      return _TransactionLoadErrorScreen(
+        onRetry: _retryLoadPersistedState,
       );
     }
 
@@ -150,6 +172,7 @@ class _TransactionCalculatorScreenState
                       transactions: _transactions,
                       showTransactions: _showTransactions,
                       bottomPadding: _showTransactions ? 10 : keypadHeight + 10,
+                      onDeleteTransaction: _requestDeleteTransaction,
                     ),
                   ),
                 ],
@@ -168,7 +191,8 @@ class _TransactionCalculatorScreenState
                       ignoring: _showTransactions,
                       child: _Keypad(
                         bottomPadding: bottomOffset,
-                        confirmEnabled: _inputMinorUnits > 0,
+                        confirmEnabled:
+                            _inputMinorUnits > 0 && !_isSavingTransaction,
                         onDigit: _appendDigit,
                         onBackspace: _backspace,
                         onConfirm: _confirmTransaction,
@@ -242,7 +266,10 @@ class _TransactionCalculatorScreenState
     unawaited(HapticFeedback.selectionClick());
 
     setState(() {
-      _inputMinorUnits = math.min(_inputMinorUnits * 10 + digit, 99999999999);
+      _inputMinorUnits = math.min(
+        _inputMinorUnits * 10 + digit,
+        maximumSupportedMinorUnits,
+      );
       _showTransactions = false;
       _showTagPicker = false;
     });
@@ -259,11 +286,9 @@ class _TransactionCalculatorScreenState
   }
 
   Future<void> _confirmTransaction() async {
-    if (_inputMinorUnits == 0) {
+    if (_inputMinorUnits == 0 || _isSavingTransaction) {
       return;
     }
-
-    unawaited(HapticFeedback.mediumImpact());
 
     final now = DateTime.now();
     final transaction = TransactionEntry(
@@ -273,10 +298,17 @@ class _TransactionCalculatorScreenState
       tagId: _selectedTagId,
     );
 
+    setState(() {
+      _isSavingTransaction = true;
+    });
+
     try {
       await _transactionRepository.insert(transaction);
     } catch (_) {
       if (mounted) {
+        setState(() {
+          _isSavingTransaction = false;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Could not save the transaction.'),
@@ -297,9 +329,11 @@ class _TransactionCalculatorScreenState
       );
       _inputMinorUnits = 0;
       _selectedTagId = null;
+      _isSavingTransaction = false;
       _showTransactions = false;
       _showTagPicker = false;
     });
+    unawaited(HapticFeedback.mediumImpact());
   }
 
   void _toggleTransactions() {
@@ -364,6 +398,130 @@ class _TransactionCalculatorScreenState
     await _openTagManager();
   }
 
+  Future<bool> _requestDeleteTransaction(
+    TransactionEntry transaction,
+  ) async {
+    final formattedAmount = formatCurrencyMinorUnits(
+      transaction.amountMinorUnits.abs(),
+      symbol: widget.plan.currencySymbol,
+    );
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        final dialogTheme = Theme.of(dialogContext);
+        final colorScheme = dialogTheme.colorScheme;
+        final actionShape = RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+        );
+        final actionTextStyle = dialogTheme.textTheme.labelLarge?.copyWith(
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0,
+        );
+        final cancelButtonStyle = FilledButton.styleFrom(
+          minimumSize: Size.zero,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          backgroundColor: colorScheme.onSurface.withValues(alpha: 0.08),
+          foregroundColor: colorScheme.onSurface,
+          shape: actionShape,
+          side: BorderSide(
+            color: colorScheme.onSurface.withValues(alpha: 0.18),
+          ),
+          textStyle: actionTextStyle,
+        );
+        final deleteButtonStyle = FilledButton.styleFrom(
+          minimumSize: Size.zero,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          backgroundColor: colorScheme.error,
+          foregroundColor: colorScheme.onError,
+          shape: actionShape,
+          side: BorderSide(color: colorScheme.error),
+          textStyle: actionTextStyle,
+        );
+
+        return AlertDialog(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+          title: const Text('Delete transaction?'),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 360),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Text(
+                  '$formattedAmount will be returned to today\'s available '
+                  'budget.',
+                ),
+                const SizedBox(height: 24),
+                Row(
+                  children: <Widget>[
+                    Expanded(
+                      child: SizedBox(
+                        height: 48,
+                        child: FilledButton.icon(
+                          onPressed: () =>
+                              Navigator.of(dialogContext).pop(false),
+                          style: cancelButtonStyle,
+                          icon: const Icon(Icons.close_rounded, size: 20),
+                          label: const Text('Cancel'),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: SizedBox(
+                        height: 48,
+                        child: FilledButton.icon(
+                          onPressed: () =>
+                              Navigator.of(dialogContext).pop(true),
+                          style: deleteButtonStyle,
+                          icon: const Icon(
+                            Icons.delete_outline_rounded,
+                            size: 20,
+                          ),
+                          label: const Text('Delete'),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (confirmed != true || !mounted) {
+      return false;
+    }
+
+    try {
+      await _transactionRepository.deleteById(transaction.id);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not delete the transaction.'),
+          ),
+        );
+      }
+      return false;
+    }
+
+    if (!mounted) {
+      return false;
+    }
+
+    setState(() {
+      _transactions.removeWhere((entry) => entry.id == transaction.id);
+    });
+    unawaited(HapticFeedback.mediumImpact());
+    return true;
+  }
+
   Future<void> _openTagManager() async {
     final updatedTags = await showModalBottomSheet<List<ExpenseTag>>(
       context: context,
@@ -411,8 +569,13 @@ class _TransactionCalculatorScreenState
       tags = await _tagRepository.findOrSeedDefaults();
       transactions = await _transactionRepository.findAllNewestFirst();
     } catch (_) {
-      tags = defaultExpenseTags();
-      transactions = <TransactionEntry>[];
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _hasLoadError = true;
+        });
+      }
+      return;
     }
 
     if (!mounted) {
@@ -424,7 +587,64 @@ class _TransactionCalculatorScreenState
       // SQLite returns a fixed-length list. The screen prepends new entries.
       _transactions = List<TransactionEntry>.of(transactions);
       _isLoading = false;
+      _hasLoadError = false;
     });
+  }
+
+  void _retryLoadPersistedState() {
+    setState(() {
+      _isLoading = true;
+      _hasLoadError = false;
+    });
+    unawaited(_loadPersistedState());
+  }
+
+  void _refreshCurrentDate() {
+    if (!mounted) {
+      return;
+    }
+
+    final currentDate = dateOnly(DateTime.now());
+
+    if (currentDate != _currentDate) {
+      setState(() {
+        _currentDate = currentDate;
+      });
+    }
+
+    _scheduleDayChange();
+  }
+
+  void _scheduleDayChange() {
+    _dayChangeTimer?.cancel();
+
+    final now = DateTime.now();
+    final tomorrow = DateTime(now.year, now.month, now.day + 1);
+    final delay = tomorrow.difference(now) + const Duration(milliseconds: 100);
+    _dayChangeTimer = Timer(delay, _refreshCurrentDate);
+  }
+}
+
+class _TransactionLoadErrorScreen extends StatelessWidget {
+  const _TransactionLoadErrorScreen({
+    required this.onRetry,
+  });
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: TrigoBackdrop(
+        child: Center(
+          child: FilledButton.icon(
+            onPressed: onRetry,
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('Try again'),
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -436,6 +656,7 @@ class _DisplayPane extends StatelessWidget {
     required this.transactions,
     required this.showTransactions,
     required this.bottomPadding,
+    required this.onDeleteTransaction,
   });
 
   final int inputMinorUnits;
@@ -444,6 +665,7 @@ class _DisplayPane extends StatelessWidget {
   final List<TransactionEntry> transactions;
   final bool showTransactions;
   final double bottomPadding;
+  final Future<bool> Function(TransactionEntry) onDeleteTransaction;
 
   @override
   Widget build(BuildContext context) {
@@ -490,6 +712,7 @@ class _DisplayPane extends StatelessWidget {
                           transactions: transactions,
                           tags: tags,
                           currencySymbol: currencySymbol,
+                          onDeleteRequested: onDeleteTransaction,
                         )
                       : _AmountComposer(
                           key: const ValueKey<String>('amount'),
@@ -540,39 +763,69 @@ class _AmountComposer extends StatelessWidget {
   }
 }
 
-class _TransactionList extends StatelessWidget {
+class _TransactionList extends StatefulWidget {
   const _TransactionList({
     required this.transactions,
     required this.tags,
     required this.currencySymbol,
+    required this.onDeleteRequested,
     super.key,
   });
 
   final List<TransactionEntry> transactions;
   final List<ExpenseTag> tags;
   final String currencySymbol;
+  final Future<bool> Function(TransactionEntry) onDeleteRequested;
+
+  @override
+  State<_TransactionList> createState() => _TransactionListState();
+}
+
+class _TransactionListState extends State<_TransactionList> {
+  String? _revealedTransactionId;
 
   @override
   Widget build(BuildContext context) {
-    if (transactions.isEmpty) {
+    if (widget.transactions.isEmpty) {
       return const _EmptyTransactions();
     }
 
     return ListView.separated(
-      padding: EdgeInsets.zero,
-      itemCount: transactions.length,
-      separatorBuilder: (context, index) => Divider(
-        height: 1,
-        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.10),
-      ),
+      padding: const EdgeInsets.all(4),
+      itemCount: widget.transactions.length,
+      separatorBuilder: (context, index) => const SizedBox(height: 8),
       itemBuilder: (context, index) {
-        return _TransactionRow(
-          transaction: transactions[index],
-          tag: _tagFor(transactions[index]),
-          currencySymbol: currencySymbol,
+        final transaction = widget.transactions[index];
+
+        return _RevealableTransactionRow(
+          key: ValueKey<String>('transaction-${transaction.id}'),
+          transaction: transaction,
+          tag: _tagFor(transaction),
+          currencySymbol: widget.currencySymbol,
+          isRevealed: transaction.id == _revealedTransactionId,
+          onPressed: () => _toggleTransaction(transaction.id),
+          onDeletePressed: () => _deleteTransaction(transaction),
         );
       },
     );
+  }
+
+  void _toggleTransaction(String transactionId) {
+    setState(() {
+      _revealedTransactionId =
+          _revealedTransactionId == transactionId ? null : transactionId;
+    });
+  }
+
+  Future<void> _deleteTransaction(TransactionEntry transaction) async {
+    final deleted = await widget.onDeleteRequested(transaction);
+    if (!mounted || !deleted) {
+      return;
+    }
+
+    setState(() {
+      _revealedTransactionId = null;
+    });
   }
 
   ExpenseTag? _tagFor(TransactionEntry transaction) {
@@ -581,13 +834,62 @@ class _TransactionList extends StatelessWidget {
       return null;
     }
 
-    for (final tag in tags) {
+    for (final tag in widget.tags) {
       if (tag.id == tagId) {
         return tag;
       }
     }
 
     return null;
+  }
+}
+
+class _RevealableTransactionRow extends StatelessWidget {
+  const _RevealableTransactionRow({
+    required this.transaction,
+    required this.tag,
+    required this.currencySymbol,
+    required this.isRevealed,
+    required this.onPressed,
+    required this.onDeletePressed,
+    super.key,
+  });
+
+  final TransactionEntry transaction;
+  final ExpenseTag? tag;
+  final String currencySymbol;
+  final bool isRevealed;
+  final VoidCallback onPressed;
+  final VoidCallback onDeletePressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final shape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(8),
+      side: BorderSide(
+        color: colorScheme.onSurface.withValues(
+          alpha: theme.brightness == Brightness.dark ? 0.16 : 0.10,
+        ),
+      ),
+    );
+
+    return Material(
+      color: colorScheme.surface.withValues(
+        alpha: theme.brightness == Brightness.dark ? 0.72 : 0.82,
+      ),
+      shape: shape,
+      clipBehavior: Clip.antiAlias,
+      child: _TransactionRow(
+        transaction: transaction,
+        tag: tag,
+        currencySymbol: currencySymbol,
+        isRevealed: isRevealed,
+        onPressed: onPressed,
+        onDeletePressed: onDeletePressed,
+      ),
+    );
   }
 }
 
@@ -627,11 +929,21 @@ class _TransactionRow extends StatelessWidget {
     required this.transaction,
     required this.tag,
     required this.currencySymbol,
+    required this.isRevealed,
+    required this.onPressed,
+    required this.onDeletePressed,
   });
+
+  static const double _deleteButtonSize = 48;
+  static const double _deleteButtonGap = 12;
+  static const double _deleteActionWidth = _deleteButtonSize + _deleteButtonGap;
 
   final TransactionEntry transaction;
   final ExpenseTag? tag;
   final String currencySymbol;
+  final bool isRevealed;
+  final VoidCallback onPressed;
+  final VoidCallback onDeletePressed;
 
   @override
   Widget build(BuildContext context) {
@@ -639,62 +951,113 @@ class _TransactionRow extends StatelessWidget {
     final iconColor = tag?.color ?? theme.colorScheme.error;
 
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Row(
-        children: <Widget>[
-          DecoratedBox(
-            decoration: BoxDecoration(
-              color: iconColor.withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: SizedBox.square(
-              dimension: 40,
-              child: Icon(
-                tag?.icon ?? Icons.remove_rounded,
-                color: iconColor,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: SizedBox(
+        height: 48,
+        child: Row(
+          children: <Widget>[
+            Expanded(
+              child: InkWell(
+                onTap: onPressed,
+                borderRadius: BorderRadius.circular(6),
+                child: Row(
+                  children: <Widget>[
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: iconColor.withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: SizedBox.square(
+                        dimension: 40,
+                        child: Icon(
+                          tag?.icon ?? Icons.remove_rounded,
+                          color: iconColor,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Text(
+                            formatShortDate(transaction.createdAt),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            tag == null
+                                ? formatClockTime(transaction.createdAt)
+                                : '${formatClockTime(transaction.createdAt)} - ${tag!.name}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurface.withValues(
+                                alpha: 0.56,
+                              ),
+                              letterSpacing: 0,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      formatSignedCurrencyMinorUnits(
+                        transaction.amountMinorUnits,
+                        symbol: currencySymbol,
+                      ),
+                      maxLines: 1,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        color: theme.colorScheme.error,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Text(
-                  formatShortDate(transaction.createdAt),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  tag == null
-                      ? formatClockTime(transaction.createdAt)
-                      : '${formatClockTime(transaction.createdAt)} - ${tag!.name}',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurface.withValues(alpha: 0.56),
-                    letterSpacing: 0,
-                  ),
-                ),
-              ],
+            ClipRect(
+              child: AnimatedSize(
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOutCubic,
+                alignment: Alignment.centerRight,
+                child: isRevealed
+                    ? SizedBox(
+                        width: _deleteActionWidth,
+                        child: Padding(
+                          padding:
+                              const EdgeInsets.only(left: _deleteButtonGap),
+                          child: SizedBox.square(
+                            dimension: _deleteButtonSize,
+                            child: Tooltip(
+                              message: 'Delete transaction',
+                              child: IconButton(
+                                onPressed: onDeletePressed,
+                                style: IconButton.styleFrom(
+                                  backgroundColor: theme.colorScheme.error,
+                                  foregroundColor: theme.colorScheme.onError,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                ),
+                                icon: const Icon(Icons.delete_outline_rounded),
+                              ),
+                            ),
+                          ),
+                        ),
+                      )
+                    : const SizedBox.shrink(),
+              ),
             ),
-          ),
-          const SizedBox(width: 12),
-          Text(
-            formatSignedCurrencyMinorUnits(
-              transaction.amountMinorUnits,
-              symbol: currencySymbol,
-            ),
-            style: theme.textTheme.titleMedium?.copyWith(
-              color: theme.colorScheme.error,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0,
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

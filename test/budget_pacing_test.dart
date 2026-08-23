@@ -95,5 +95,31 @@ void main() {
         13500,
       );
     });
+
+    test('returns a deleted expense to the current available budget', () {
+      final plan = BudgetPlan(
+        budgetMinorUnits: 30000,
+        startDate: DateTime(2026, 7, 25),
+        endDate: DateTime(2026, 7, 27),
+      );
+      final transaction = TransactionEntry(
+        id: 'deleted',
+        amountMinorUnits: -4000,
+        createdAt: DateTime(2026, 7, 25, 12),
+      );
+      final currentDate = DateTime(2026, 7, 26);
+      final availableBeforeDeletion = availableBudgetMinorUnitsThroughDate(
+        plan,
+        currentDate,
+        <TransactionEntry>[transaction],
+      );
+      final availableAfterDeletion = availableBudgetMinorUnitsThroughDate(
+        plan,
+        currentDate,
+        const <TransactionEntry>[],
+      );
+
+      expect(availableAfterDeletion - availableBeforeDeletion, 4000);
+    });
   });
 }

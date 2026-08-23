@@ -1,4 +1,5 @@
 const String defaultCurrencySymbol = r'$';
+const int maximumSupportedMinorUnits = 99999999999;
 
 String formatCurrencyMinorUnits(
   int minorUnits, {
@@ -40,10 +41,14 @@ int parseCurrencyInputToMinorUnits(String input) {
   final minorText = firstDecimal == -1
       ? ''
       : sanitized.substring(firstDecimal + 1).replaceAll('.', '');
-  final majorUnits = int.tryParse(majorText.isEmpty ? '0' : majorText) ?? 0;
+  final majorUnits =
+      BigInt.tryParse(majorText.isEmpty ? '0' : majorText) ?? BigInt.zero;
   final cents = int.tryParse(minorText.padRight(2, '0').substring(0, 2)) ?? 0;
 
-  return majorUnits * 100 + cents;
+  final minorUnits = majorUnits * BigInt.from(100) + BigInt.from(cents);
+  final maximum = BigInt.from(maximumSupportedMinorUnits);
+
+  return minorUnits > maximum ? maximumSupportedMinorUnits : minorUnits.toInt();
 }
 
 String _formatMajorUnits(int majorUnits) {
