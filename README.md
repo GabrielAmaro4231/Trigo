@@ -28,6 +28,9 @@ lib/
     features/
       setup/
       transactions/
+    data/
+      local/
+      repositories/
     models/
     theme/
     utils/
@@ -40,6 +43,8 @@ Principais áreas:
 - `features/setup`: tela de configuração do orçamento.
 - `features/transactions`: tela de lançamento, lista de transações e gerenciamento de categorias.
 - `models`: estruturas de dados principais do aplicativo.
+- `data/local`: definição e versionamento do banco SQLite.
+- `data/repositories`: acesso aos dados de orçamento, despesas e categorias.
 - `utils`: funções de datas, dinheiro e cálculo de orçamento diário.
 - `widgets`: componentes visuais reutilizáveis.
 - `theme`: definição do tema visual da aplicação.
@@ -49,7 +54,26 @@ Principais áreas:
 - Flutter
 - Dart
 - Material Design
+- SQLite, por meio do pacote `sqflite`
 - Testes com `flutter_test`
+
+## Banco de dados local
+
+O aplicativo utiliza SQLite para guardar o orçamento ativo, as despesas e as
+categorias no próprio dispositivo, sem necessidade de conexão com a internet.
+Durante a execução no Android, o arquivo `trigo.sqlite3` permanece no
+armazenamento privado do aplicativo, como esperado para dados locais.
+
+Para inspecionar uma cópia do banco no computador, com o aplicativo debug em
+execução no emulador ou dispositivo conectado, execute:
+
+```sh
+bash tool/export_android_database.sh
+```
+
+O comando exporta `trigo.sqlite3` para a raiz do projeto. O arquivo e seus
+arquivos auxiliares do SQLite já estão definidos no `.gitignore` e não serão
+enviados ao GitHub.
 
 ## Como executar
 

@@ -1,15 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../data/local/app_database.dart';
+import '../../data/repositories/budget_repository.dart';
 import '../../models/budget_plan.dart';
 import '../../utils/dates.dart';
 import '../../utils/money.dart';
 import '../../widgets/glass_surface.dart';
 import '../../widgets/trigo_backdrop.dart';
-import '../transactions/transaction_calculator_screen.dart';
 
 class BudgetSetupScreen extends StatefulWidget {
-  const BudgetSetupScreen({super.key});
+  const BudgetSetupScreen({
+    required this.database,
+    required this.onPlanSaved,
+    super.key,
+  });
+
+  final AppDatabase database;
+  final ValueChanged<BudgetPlan> onPlanSaved;
 
   @override
   State<BudgetSetupScreen> createState() => _BudgetSetupScreenState();
@@ -20,6 +28,7 @@ class _BudgetSetupScreenState extends State<BudgetSetupScreen> {
 
   late DateTime _endDate;
   int _budgetMinorUnits = 0;
+  bool _isSaving = false;
 
   @override
   void initState() {
@@ -36,7 +45,7 @@ class _BudgetSetupScreenState extends State<BudgetSetupScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final canContinue = _budgetMinorUnits > 0;
+    final canContinue = _budgetMinorUnits > 0 && !_isSaving;
 
     return Scaffold(
       body: TrigoBackdrop(
@@ -196,17 +205,38 @@ class _BudgetSetupScreenState extends State<BudgetSetupScreen> {
   Future<void> _continueToTransactions() async {
     FocusScope.of(context).unfocus();
     final now = DateTime.now();
-
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (context) => TransactionCalculatorScreen(
-          plan: BudgetPlan(
-            budgetMinorUnits: _budgetMinorUnits,
-            startDate: DateTime(now.year, now.month, now.day),
-            endDate: _endDate,
-          ),
-        ),
-      ),
+    final plan = BudgetPlan(
+      budgetMinorUnits: _budgetMinorUnits,
+      startDate: DateTime(now.year, now.month, now.day),
+      endDate: _endDate,
     );
+
+    setState(() {
+      _isSaving = true;
+    });
+
+    try {
+      await BudgetRepository(widget.database).saveActivePlan(plan);
+
+      if (!mounted) {
+        return;
+      }
+
+      widget.onPlanSaved(plan);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not save the budget.'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+      }
+    }
   }
 }

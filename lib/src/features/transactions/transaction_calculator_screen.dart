@@ -4,6 +4,9 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../data/local/app_database.dart';
+import '../../data/repositories/expense_tag_repository.dart';
+import '../../data/repositories/transaction_repository.dart';
 import '../../models/budget_plan.dart';
 import '../../models/expense_tag.dart';
 import '../../models/transaction_entry.dart';
@@ -17,10 +20,12 @@ import '../../widgets/trigo_backdrop.dart';
 class TransactionCalculatorScreen extends StatefulWidget {
   const TransactionCalculatorScreen({
     required this.plan,
+    required this.database,
     super.key,
   });
 
   final BudgetPlan plan;
+  final AppDatabase database;
 
   @override
   State<TransactionCalculatorScreen> createState() =>
@@ -29,19 +34,25 @@ class TransactionCalculatorScreen extends StatefulWidget {
 
 class _TransactionCalculatorScreenState
     extends State<TransactionCalculatorScreen> {
-  final List<TransactionEntry> _transactions = <TransactionEntry>[];
+  List<TransactionEntry> _transactions = <TransactionEntry>[];
 
+  late final ExpenseTagRepository _tagRepository;
+  late final TransactionRepository _transactionRepository;
   late List<ExpenseTag> _tags;
   String? _selectedTagId;
 
   int _inputMinorUnits = 0;
+  bool _isLoading = true;
   bool _showTransactions = false;
   bool _showTagPicker = false;
 
   @override
   void initState() {
     super.initState();
+    _tagRepository = ExpenseTagRepository(widget.database);
+    _transactionRepository = TransactionRepository(widget.database);
     _tags = defaultExpenseTags();
+    unawaited(_loadPersistedState());
   }
 
   ExpenseTag? get _selectedTag {
@@ -89,6 +100,16 @@ class _TransactionCalculatorScreenState
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(
+        body: TrigoBackdrop(
+          child: Center(
+            child: CircularProgressIndicator(),
+          ),
+        ),
+      );
+    }
+
     final viewPadding = MediaQuery.viewPaddingOf(context);
     final screenWidth = MediaQuery.sizeOf(context).width;
     final topOffset = _budgetPillTopOffset(viewPadding.top);
@@ -99,99 +120,107 @@ class _TransactionCalculatorScreenState
     final tagPickerBottom =
         keypadHeight + (showTagPickerBesideShortcut ? 12.0 : 76.0);
 
-    return Scaffold(
-      resizeToAvoidBottomInset: false,
-      body: TrigoBackdrop(
-        child: Stack(
-          children: <Widget>[
-            Column(
-              children: <Widget>[
-                Padding(
-                  padding: EdgeInsets.only(top: topOffset),
-                  child: BudgetPill(
-                    remainingMinorUnits: _remainingMinorUnits,
-                    budgetMinorUnits: _todayStartingAvailableMinorUnits,
-                    currencySymbol: widget.plan.currencySymbol,
-                    contextLabel: 'Today',
-                    onPressed: _toggleTransactions,
-                  ),
-                ),
-                Expanded(
-                  child: _DisplayPane(
-                    inputMinorUnits: _inputMinorUnits,
-                    currencySymbol: widget.plan.currencySymbol,
-                    tags: _tags,
-                    transactions: _transactions,
-                    showTransactions: _showTransactions,
-                    bottomPadding: _showTransactions ? 10 : keypadHeight + 10,
-                  ),
-                ),
-              ],
-            ),
-            Align(
-              alignment: Alignment.bottomCenter,
-              child: AnimatedSlide(
-                duration: const Duration(milliseconds: 320),
-                curve: Curves.easeOutCubic,
-                offset: _showTransactions ? const Offset(0, 1.08) : Offset.zero,
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 180),
-                  opacity: _showTransactions ? 0 : 1,
-                  child: IgnorePointer(
-                    ignoring: _showTransactions,
-                    child: _Keypad(
-                      bottomPadding: bottomOffset,
-                      confirmEnabled: _inputMinorUnits > 0,
-                      onDigit: _appendDigit,
-                      onBackspace: _backspace,
-                      onConfirm: _confirmTransaction,
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        _handleBackNavigation(didPop);
+      },
+      child: Scaffold(
+        resizeToAvoidBottomInset: false,
+        body: TrigoBackdrop(
+          child: Stack(
+            children: <Widget>[
+              Column(
+                children: <Widget>[
+                  Padding(
+                    padding: EdgeInsets.only(top: topOffset),
+                    child: BudgetPill(
+                      remainingMinorUnits: _remainingMinorUnits,
+                      budgetMinorUnits: _todayStartingAvailableMinorUnits,
+                      currencySymbol: widget.plan.currencySymbol,
+                      contextLabel: 'Today',
+                      onPressed: _toggleTransactions,
                     ),
                   ),
-                ),
+                  Expanded(
+                    child: _DisplayPane(
+                      inputMinorUnits: _inputMinorUnits,
+                      currencySymbol: widget.plan.currencySymbol,
+                      tags: _tags,
+                      transactions: _transactions,
+                      showTransactions: _showTransactions,
+                      bottomPadding: _showTransactions ? 10 : keypadHeight + 10,
+                    ),
+                  ),
+                ],
               ),
-            ),
-            Positioned(
-              left: 16,
-              right: tagPickerRight,
-              bottom: tagPickerBottom,
-              child: Align(
-                alignment: Alignment.centerRight,
-                child: AnimatedScale(
-                  duration: const Duration(milliseconds: 180),
+              Align(
+                alignment: Alignment.bottomCenter,
+                child: AnimatedSlide(
+                  duration: const Duration(milliseconds: 320),
                   curve: Curves.easeOutCubic,
-                  scale: _showTagPicker && !_showTransactions ? 1 : 0.96,
+                  offset:
+                      _showTransactions ? const Offset(0, 1.08) : Offset.zero,
                   child: AnimatedOpacity(
                     duration: const Duration(milliseconds: 180),
-                    opacity: _showTagPicker && !_showTransactions ? 1 : 0,
+                    opacity: _showTransactions ? 0 : 1,
                     child: IgnorePointer(
-                      ignoring: !_showTagPicker || _showTransactions,
-                      child: _FloatingTagPicker(
-                        tags: _tags,
-                        selectedTagId: _selectedTagId,
-                        onSelected: _selectTag,
-                        onManage: _openManagedTagsFromPicker,
+                      ignoring: _showTransactions,
+                      child: _Keypad(
+                        bottomPadding: bottomOffset,
+                        confirmEnabled: _inputMinorUnits > 0,
+                        onDigit: _appendDigit,
+                        onBackspace: _backspace,
+                        onConfirm: _confirmTransaction,
+                        onShowTransactions: _showTransactionList,
                       ),
                     ),
                   ),
                 ),
               ),
-            ),
-            Positioned(
-              right: 20,
-              bottom: keypadHeight + 18,
-              child: AnimatedOpacity(
-                duration: const Duration(milliseconds: 180),
-                opacity: _showTransactions ? 0 : 1,
-                child: IgnorePointer(
-                  ignoring: _showTransactions,
-                  child: _TagShortcutButton(
-                    tag: _selectedTag,
-                    onPressed: _toggleTagPicker,
+              Positioned(
+                left: 16,
+                right: tagPickerRight,
+                bottom: tagPickerBottom,
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: AnimatedScale(
+                    duration: const Duration(milliseconds: 180),
+                    curve: Curves.easeOutCubic,
+                    scale: _showTagPicker && !_showTransactions ? 1 : 0.96,
+                    child: AnimatedOpacity(
+                      duration: const Duration(milliseconds: 180),
+                      opacity: _showTagPicker && !_showTransactions ? 1 : 0,
+                      child: IgnorePointer(
+                        ignoring: !_showTagPicker || _showTransactions,
+                        child: _FloatingTagPicker(
+                          tags: _tags,
+                          selectedTagId: _selectedTagId,
+                          onSelected: _selectTag,
+                          onManage: _openManagedTagsFromPicker,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ),
-          ],
+              Positioned(
+                right: 20,
+                bottom: keypadHeight + 18,
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 180),
+                  opacity: _showTransactions ? 0 : 1,
+                  child: IgnorePointer(
+                    ignoring: _showTransactions,
+                    child: _TagShortcutButton(
+                      tag: _selectedTag,
+                      onPressed: _toggleTagPicker,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -229,7 +258,7 @@ class _TransactionCalculatorScreenState
     });
   }
 
-  void _confirmTransaction() {
+  Future<void> _confirmTransaction() async {
     if (_inputMinorUnits == 0) {
       return;
     }
@@ -237,16 +266,34 @@ class _TransactionCalculatorScreenState
     unawaited(HapticFeedback.mediumImpact());
 
     final now = DateTime.now();
+    final transaction = TransactionEntry(
+      id: now.microsecondsSinceEpoch.toString(),
+      amountMinorUnits: -_inputMinorUnits,
+      createdAt: now,
+      tagId: _selectedTagId,
+    );
+
+    try {
+      await _transactionRepository.insert(transaction);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not save the transaction.'),
+          ),
+        );
+      }
+      return;
+    }
+
+    if (!mounted) {
+      return;
+    }
 
     setState(() {
       _transactions.insert(
         0,
-        TransactionEntry(
-          id: now.microsecondsSinceEpoch.toString(),
-          amountMinorUnits: -_inputMinorUnits,
-          createdAt: now,
-          tagId: _selectedTagId,
-        ),
+        transaction,
       );
       _inputMinorUnits = 0;
       _selectedTagId = null;
@@ -262,6 +309,32 @@ class _TransactionCalculatorScreenState
       _showTransactions = !_showTransactions;
       _showTagPicker = false;
     });
+  }
+
+  void _showTransactionList() {
+    if (_showTransactions) {
+      return;
+    }
+
+    _toggleTransactions();
+  }
+
+  void _handleBackNavigation(bool didPop) {
+    if (didPop) {
+      return;
+    }
+
+    if (_showTransactions || _showTagPicker) {
+      setState(() {
+        _showTransactions = false;
+        _showTagPicker = false;
+      });
+      return;
+    }
+
+    if (Theme.of(context).platform == TargetPlatform.android) {
+      unawaited(SystemNavigator.pop());
+    }
   }
 
   void _toggleTagPicker() {
@@ -305,11 +378,52 @@ class _TransactionCalculatorScreenState
       return;
     }
 
+    try {
+      await _tagRepository.replaceAll(updatedTags);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not save the tags.'),
+          ),
+        );
+      }
+      return;
+    }
+
+    if (!mounted) {
+      return;
+    }
+
     setState(() {
       _tags = updatedTags;
       if (!_tags.any((tag) => tag.id == _selectedTagId)) {
         _selectedTagId = null;
       }
+    });
+  }
+
+  Future<void> _loadPersistedState() async {
+    late final List<ExpenseTag> tags;
+    late final List<TransactionEntry> transactions;
+
+    try {
+      tags = await _tagRepository.findOrSeedDefaults();
+      transactions = await _transactionRepository.findAllNewestFirst();
+    } catch (_) {
+      tags = defaultExpenseTags();
+      transactions = <TransactionEntry>[];
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _tags = tags;
+      // SQLite returns a fixed-length list. The screen prepends new entries.
+      _transactions = List<TransactionEntry>.of(transactions);
+      _isLoading = false;
     });
   }
 }
@@ -338,47 +452,53 @@ class _DisplayPane extends StatelessWidget {
       child: GlassSurface(
         padding: const EdgeInsets.all(18),
         child: SizedBox.expand(
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 260),
-            switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeInCubic,
-            layoutBuilder: (currentChild, previousChildren) {
-              return Stack(
-                fit: StackFit.expand,
-                children: <Widget>[
-                  for (final child in previousChildren)
-                    Positioned.fill(child: child),
-                  if (currentChild != null)
-                    Positioned.fill(child: currentChild),
-                ],
-              );
-            },
-            transitionBuilder: (child, animation) {
-              return FadeTransition(
-                opacity: animation,
-                child: ScaleTransition(
-                  scale: Tween<double>(begin: 0.98, end: 1).animate(
-                    CurvedAnimation(
-                      parent: animation,
-                      curve: Curves.easeOutCubic,
-                    ),
-                  ),
-                  child: child,
+          child: Stack(
+            children: <Widget>[
+              Positioned.fill(
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 260),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  layoutBuilder: (currentChild, previousChildren) {
+                    return Stack(
+                      fit: StackFit.expand,
+                      children: <Widget>[
+                        for (final child in previousChildren)
+                          Positioned.fill(child: child),
+                        if (currentChild != null)
+                          Positioned.fill(child: currentChild),
+                      ],
+                    );
+                  },
+                  transitionBuilder: (child, animation) {
+                    return FadeTransition(
+                      opacity: animation,
+                      child: ScaleTransition(
+                        scale: Tween<double>(begin: 0.98, end: 1).animate(
+                          CurvedAnimation(
+                            parent: animation,
+                            curve: Curves.easeOutCubic,
+                          ),
+                        ),
+                        child: child,
+                      ),
+                    );
+                  },
+                  child: showTransactions
+                      ? _TransactionList(
+                          key: const ValueKey<String>('transactions'),
+                          transactions: transactions,
+                          tags: tags,
+                          currencySymbol: currencySymbol,
+                        )
+                      : _AmountComposer(
+                          key: const ValueKey<String>('amount'),
+                          amountMinorUnits: inputMinorUnits,
+                          currencySymbol: currencySymbol,
+                        ),
                 ),
-              );
-            },
-            child: showTransactions
-                ? _TransactionList(
-                    key: const ValueKey<String>('transactions'),
-                    transactions: transactions,
-                    tags: tags,
-                    currencySymbol: currencySymbol,
-                  )
-                : _AmountComposer(
-                    key: const ValueKey<String>('amount'),
-                    amountMinorUnits: inputMinorUnits,
-                    currencySymbol: currencySymbol,
-                  ),
+              ),
+            ],
           ),
         ),
       ),
@@ -1546,17 +1666,19 @@ class _Keypad extends StatelessWidget {
     required this.onDigit,
     required this.onBackspace,
     required this.onConfirm,
+    required this.onShowTransactions,
   });
 
   static const double _topPadding = 6;
+  static const double _handleTouchHeight = 24;
   static const double _handleHeight = 4;
-  static const double _handleGap = 12;
+  static const double _handleGap = 4;
   static const double _buttonHeight = 64;
   static const double _rowGap = 10;
 
   static double heightFor(double bottomPadding) {
     return _topPadding +
-        _handleHeight +
+        _handleTouchHeight +
         _handleGap +
         _buttonHeight * 4 +
         _rowGap * 3 +
@@ -1568,6 +1690,7 @@ class _Keypad extends StatelessWidget {
   final ValueChanged<int> onDigit;
   final VoidCallback onBackspace;
   final VoidCallback onConfirm;
+  final VoidCallback onShowTransactions;
 
   @override
   Widget build(BuildContext context) {
@@ -1576,15 +1699,34 @@ class _Keypad extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          DecoratedBox(
-            decoration: BoxDecoration(
-              color: Theme.of(context)
-                  .colorScheme
-                  .onSurface
-                  .withValues(alpha: 0.22),
-              borderRadius: BorderRadius.circular(999),
+          Semantics(
+            button: true,
+            label: 'Show transactions',
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: onShowTransactions,
+              onVerticalDragEnd: (details) {
+                if ((details.primaryVelocity ?? 0) > 120) {
+                  onShowTransactions();
+                }
+              },
+              child: SizedBox(
+                width: double.infinity,
+                height: _handleTouchHeight,
+                child: Center(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.22),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: const SizedBox(width: 46, height: _handleHeight),
+                  ),
+                ),
+              ),
             ),
-            child: const SizedBox(width: 46, height: _handleHeight),
           ),
           const SizedBox(height: _handleGap),
           _KeypadRow(
