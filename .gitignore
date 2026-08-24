@@ -26,6 +26,7 @@ ios/Runner.xcodeproj/xcuserdata/
 .idea/
 .vscode/
 *.log
+.DS_Store
 
 # Local SQLite databases
 *.db
