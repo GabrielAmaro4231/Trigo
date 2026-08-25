@@ -1,5 +1,7 @@
 # Trigo
 
+**[Assistir ao vídeo de apresentação do aplicativo](https://youtu.be/FLkU6aBDFvA)**
+
 **[Baixar o APK do Trigo para Android](https://drive.google.com/file/d/1gpqXtkXaydy1i4b2gJLuG4TTFPK9bE1g/view?usp=share_link)**
 
 Trigo é um aplicativo mobile desenvolvido em Flutter para auxiliar no controle de gastos de forma simples, rápida e offline. A proposta do projeto é transformar um orçamento definido pelo usuário em uma referência diária de uso, ajudando a visualizar quanto ainda pode ser gasto ao longo do período escolhido.
